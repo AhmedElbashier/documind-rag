@@ -6,7 +6,7 @@ import {
   Send, Bot, User, FileText, ArrowLeft,
   Loader2, BookOpen, FileSearch, MessageSquare,
 } from "lucide-react";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useRouter } from "next/navigation";
@@ -87,11 +87,17 @@ export default function ChatWorkspace({ documentId, documentUrl, documentName }:
   }, []);
 
   // ── ai@6: useChat with transport instead of api/body ──
+  // Memoize the transport so a new instance isn't created on every keystroke.
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: "/api/chat",
+        body: { documentId },
+      }),
+    [documentId],
+  );
   const { messages, sendMessage, status, setMessages } = useChat({
-    transport: new DefaultChatTransport({
-      api: "/api/chat",
-      body: { documentId },
-    }),
+    transport,
   });
 
   // Welcome message (parts-based UIMessage format)
@@ -263,6 +269,8 @@ export default function ChatWorkspace({ documentId, documentUrl, documentName }:
     </div>
   );
 
+  // Declared inside the parent but invoked as a function (not <ChatInput />),
+  // so React does not remount the textarea on every keystroke.
   /** Chat input box — keyboard offset applied via paddingBottom on mobile */
   const ChatInput = () => (
     <div
@@ -325,7 +333,7 @@ export default function ChatWorkspace({ documentId, documentUrl, documentName }:
     return (
       <div className="flex flex-col h-[100dvh] w-full bg-[oklch(0.10_0_0)] text-white dark overflow-hidden">
         {/* Shared toolbar */}
-        <Toolbar />
+        {Toolbar({})}
 
         {/* Tab switcher */}
         <div className="shrink-0 px-3 pt-2 pb-1">
@@ -375,8 +383,8 @@ export default function ChatWorkspace({ documentId, documentUrl, documentName }:
                 className="absolute inset-0 flex flex-col"
                 style={{ background: "oklch(0.11 0.003 240)" }}
               >
-                <MessageList />
-                <ChatInput />
+                {MessageList()}
+                {ChatInput()}
               </motion.div>
             ) : (
               <motion.div
@@ -387,7 +395,7 @@ export default function ChatWorkspace({ documentId, documentUrl, documentName }:
                 transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                 className="absolute inset-0 flex flex-col bg-[oklch(0.12_0.003_240)]"
               >
-                <PDFPanel />
+                {PDFPanel()}
               </motion.div>
             )}
           </AnimatePresence>
@@ -432,8 +440,8 @@ export default function ChatWorkspace({ documentId, documentUrl, documentName }:
         className="flex flex-col border-r border-white/[0.06] bg-[oklch(0.12_0.003_240)]"
         style={{ width: `${leftPct}%` }}
       >
-        <Toolbar />
-        <PDFPanel />
+        {Toolbar({})}
+        {PDFPanel()}
       </div>
 
       {/* ── Draggable Divider ── */}
@@ -471,8 +479,8 @@ export default function ChatWorkspace({ documentId, documentUrl, documentName }:
           </div>
         </div>
 
-        <MessageList />
-        <ChatInput />
+        {MessageList()}
+        {ChatInput()}
       </div>
     </div>
   );

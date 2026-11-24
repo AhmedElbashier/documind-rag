@@ -1,21 +1,42 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { streamText } from 'ai';
+import { convertToModelMessages, streamText, type UIMessage } from 'ai';
 import { embedText, toPgVector } from '@/lib/embeddings';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 
 // Explicitly pass GEMINI_API_KEY because @ai-sdk/google defaults to GOOGLE_GENERATIVE_AI_API_KEY
 const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY! });
 
+/** Read text from an AI SDK UI message (`parts`) or a legacy `{ content }` payload. */
+function getMessageText(message: UIMessage | { content?: unknown; parts?: unknown } | undefined): string {
+  if (!message) return "";
+  const parts = (message as UIMessage).parts;
+  if (Array.isArray(parts)) {
+    return parts
+      .filter((p): p is { type: "text"; text: string } => p != null && p.type === "text" && typeof (p as { text?: unknown }).text === "string")
+      .map((p) => p.text)
+      .join("");
+  }
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  return "";
+}
+
 export async function POST(req: Request) {
   try {
-    const { messages, documentId } = await req.json();
+    const { messages, documentId }: { messages?: UIMessage[]; documentId?: string } = await req.json();
 
     if (!documentId) {
       return new Response("documentId is required", { status: 400 });
     }
 
-    const lastMessage = messages[messages.length - 1];
-    const query = lastMessage.content;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return new Response("messages are required", { status: 400 });
+    }
+
+    const query = getMessageText(messages[messages.length - 1]);
+    if (!query.trim()) {
+      return new Response("A text message is required", { status: 400 });
+    }
 
     // 1. Embed the user query with the same model + dimension used at indexing time
     const embedding = await embedText(query, 'RETRIEVAL_QUERY');
@@ -35,7 +56,7 @@ export async function POST(req: Request) {
 
     // 3. Build context string with page citations
     const contextText = (documentChunks || [])
-      .map((chunk: any) => {
+      .map((chunk: { metadata?: { loc?: { pageNumber?: number } }; content?: string }) => {
         const pageNum = chunk.metadata?.loc?.pageNumber || "?";
         return `[Page ${pageNum}]: ${chunk.content}`;
       })
@@ -54,16 +75,18 @@ Rules:
 - Always cite page numbers: e.g. "According to the document (Page 4)..."
 - If the answer is not in the context, say so clearly.`;
 
-    // 4. Stream the response — gemini-2.0-flash is fast and production-ready
-    const response = await streamText({
-      model: google('gemini-2.0-flash'),
+    // 4. Stream a UI message response that useChat / DefaultChatTransport can parse.
+    // gemini-2.5-flash is the current stable flash model; gemini-2.0-flash returned empty streams.
+    const result = streamText({
+      model: google('gemini-2.5-flash'),
       system: systemPrompt,
-      messages: messages,
+      messages: await convertToModelMessages(messages),
     });
 
-    return response.toTextStreamResponse();
-  } catch (error: any) {
+    return result.toUIMessageStreamResponse();
+  } catch (error: unknown) {
     console.error("Chat API error:", error);
-    return new Response(error.message || "Internal Server Error", { status: 500 });
+    const message = error instanceof Error ? error.message : "Internal Server Error";
+    return new Response(message, { status: 500 });
   }
 }
