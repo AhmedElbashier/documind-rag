@@ -1,11 +1,7 @@
 "use server";
 
 import { supabaseAdmin } from "@/lib/supabase";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { embed } from "ai";
-
-// Explicitly pass GEMINI_API_KEY because @ai-sdk/google defaults to GOOGLE_GENERATIVE_AI_API_KEY
-const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY! });
+import { embedText, toPgVector } from "@/lib/embeddings";
 import { WebPDFLoader } from "@langchain/community/document_loaders/web/pdf";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 
@@ -82,11 +78,8 @@ export async function processPDFAction(formData: FormData) {
 
     // 5. Store embeddings in vector DB
     for (const chunk of chunks) {
-      // Use @ai-sdk/google embed — gemini-embedding-001 → 3072 dims, matches VECTOR(3072) schema
-      const { embedding } = await embed({
-        model: google.textEmbeddingModel("gemini-embedding-001"),
-        value: chunk.pageContent,
-      });
+      // Same model + dimension as the query side (see src/lib/embeddings.ts)
+      const embedding = await embedText(chunk.pageContent, "RETRIEVAL_DOCUMENT");
 
       // Store in pgvector natively, ensuring we include page metadata (loc.pageNumber)
       const { error: embedError } = await supabaseAdmin
@@ -95,7 +88,7 @@ export async function processPDFAction(formData: FormData) {
           document_id: documentId,
           content: chunk.pageContent,
           metadata: chunk.metadata,
-          embedding: `[${embedding.join(",")}]`, // pgvector expects string literal format
+          embedding: toPgVector(embedding),
         });
 
       if (embedError) {

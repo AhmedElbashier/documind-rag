@@ -16,17 +16,18 @@ CREATE TABLE embeddings (
   document_id UUID REFERENCES documents(id) ON DELETE CASCADE NOT NULL,
   content TEXT NOT NULL,
   metadata JSONB DEFAULT '{}'::jsonb, -- e.g., {"loc": {"pageNumber": 1}}
-  embedding VECTOR(3072) NOT NULL, -- 3072 is the format for Gemini models like gemini-embedding-001
+  embedding VECTOR(768) NOT NULL, -- gemini-embedding-001 with outputDimensionality=768 (see src/lib/embeddings.ts)
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Create HNSW index for fast nearest-neighbor search
+-- Create HNSW index for fast nearest-neighbor search (pgvector HNSW supports up to 2,000 dims)
 CREATE INDEX on embeddings USING hnsw (embedding vector_cosine_ops);
 
 -- Optional: Create a function for similarity search
 CREATE OR REPLACE FUNCTION match_embeddings(
-  query_embedding VECTOR(3072),
-  match_count INT DEFAULT 5
+  query_embedding VECTOR(768),
+  match_count INT DEFAULT 5,
+  filter_document_id UUID DEFAULT NULL
 )
 RETURNS TABLE (
   id UUID,
@@ -49,6 +50,7 @@ AS $$
     1 - (embeddings.embedding <=> query_embedding) AS similarity
   FROM embeddings
   JOIN documents ON documents.id = embeddings.document_id
+  WHERE filter_document_id IS NULL OR embeddings.document_id = filter_document_id
   ORDER BY embeddings.embedding <=> query_embedding
   LIMIT match_count;
 $$;

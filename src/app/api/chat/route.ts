@@ -1,5 +1,6 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { embed, streamText } from 'ai';
+import { streamText } from 'ai';
+import { embedText, toPgVector } from '@/lib/embeddings';
 import { supabaseAdmin } from '@/lib/supabase';
 
 // Explicitly pass GEMINI_API_KEY because @ai-sdk/google defaults to GOOGLE_GENERATIVE_AI_API_KEY
@@ -16,17 +17,15 @@ export async function POST(req: Request) {
     const lastMessage = messages[messages.length - 1];
     const query = lastMessage.content;
 
-    // 1. Embed the user query — must use same model as indexing (text-embedding-004 → 768 dims)
-    const { embedding } = await embed({
-      model: google.textEmbeddingModel('text-embedding-004'),
-      value: query,
-    });
+    // 1. Embed the user query with the same model + dimension used at indexing time
+    const embedding = await embedText(query, 'RETRIEVAL_QUERY');
 
-    // 2. Similarity search scoped to this document
-    const { data: matchedChunks, error: matchError } = await supabaseAdmin
+    // 2. Similarity search scoped to this document (filtered in SQL, before LIMIT)
+    const { data: documentChunks, error: matchError } = await supabaseAdmin
       .rpc('match_embeddings', {
-        query_embedding: `[${embedding.join(",")}]`, // pgvector string literal
+        query_embedding: toPgVector(embedding),
         match_count: 8,
+        filter_document_id: documentId,
       });
 
     if (matchError) {
@@ -34,13 +33,8 @@ export async function POST(req: Request) {
       return new Response("Error querying the document.", { status: 500 });
     }
 
-    // Filter to the specific document being chatted with
-    const documentChunks = (matchedChunks || []).filter(
-      (chunk: any) => chunk.document_id === documentId
-    );
-
     // 3. Build context string with page citations
-    const contextText = documentChunks
+    const contextText = (documentChunks || [])
       .map((chunk: any) => {
         const pageNum = chunk.metadata?.loc?.pageNumber || "?";
         return `[Page ${pageNum}]: ${chunk.content}`;
