@@ -32,6 +32,7 @@ Question ─► /api/chat (streaming, Vercel AI SDK)
 ## Run locally
 
 1. Create a Supabase project and run `supabase_schema.sql` (and `supabase_schema_stripe.sql` for billing) in the SQL editor.
+   Then run `supabase_rls.sql` so Row Level Security is on and the anon key cannot read or write table data. The app itself uses `SUPABASE_SERVICE_ROLE_KEY` on the server, which bypasses RLS.
    Upgrading a database created with the old `VECTOR(3072)` schema? Run `supabase_migration_768.sql`, then re-upload your PDFs.
 2. Configure and start:
 
@@ -58,6 +59,7 @@ src/app/api/stripe/*             checkout + webhook
 src/app/hub/[id]/ChatWorkspace.tsx
 src/middleware.ts                route guard / plan limits
 supabase_schema*.sql             tables, pgvector index, billing tables
+supabase_rls.sql                 row level security and privilege lockdown
 ```
 
 ## Roadmap
